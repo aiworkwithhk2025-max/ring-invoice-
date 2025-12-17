@@ -1,96 +1,134 @@
-import { GoogleGenAI, Type, Chat } from "@google/genai";
-import { Invoice } from "../types";
+import { GoogleGenAI, Modality, Chat } from "@google/genai";
 
-// NOTE: In a real app, never expose API keys on the client side.
-// This is a demo environment where process.env.API_KEY || 'FAKE_API_KEY_FOR_DEVELOPMENT' is assumed to be safe/injected.
 const apiKey = process.env.API_KEY || '';
 const ai = new GoogleGenAI({ apiKey });
 
-const modelName = "gemini-2.5-flash";
+// --- Models ---
+// Corrected model names based on official availability to fix 404 errors
+const MODEL_FAST = "gemini-2.5-flash"; // Reliable fast model for basic tasks
+const MODEL_THINKING = "gemini-3-pro-preview"; // For complex reasoning
+const MODEL_TTS = "gemini-2.5-flash-preview-tts"; // For speech generation
 
+// --- Audio Helpers ---
+function decode(base64: string) {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+// --- Service Functions ---
+
+/**
+ * Uses Flash for low-latency generation of invoice items from natural language.
+ */
 export const generateSmartInvoiceItems = async (promptText: string) => {
-  if (!apiKey) throw new Error("API Key not found");
+  if (!apiKey) throw new Error("API Key is missing");
 
   try {
     const response = await ai.models.generateContent({
-      model: modelName,
-      contents: `Extract invoice line items from this description: "${promptText}". 
-      Return a JSON array of objects with description, quantity, and unitPrice. 
-      Guess reasonable market rates if not specified. Currency is generic.`,
+      model: MODEL_FAST,
+      contents: promptText,
       config: {
+        systemInstruction: "You are a high-speed data processor for RING. Convert the description into a JSON array of invoice line items (description, quantity, unitPrice). No markdown. JSON only.",
         responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              description: { type: Type.STRING },
-              quantity: { type: Type.NUMBER },
-              unitPrice: { type: Type.NUMBER },
-            },
-            required: ["description", "quantity", "unitPrice"],
-          },
-        },
       },
     });
 
-    let text = response.text || "[]";
-    // Strip markdown code blocks if the model includes them despite responseMimeType
-    text = text.replace(/^```json\s*/, '').replace(/^```\s*/, '').replace(/\s*```$/, '');
-    
-    return JSON.parse(text);
+    return JSON.parse(response.text || "[]");
   } catch (error) {
-    console.error("Gemini API Error:", error);
+    console.error("Fast AI Generation Error:", error);
     throw error;
   }
 };
 
-export const generateBusinessInsights = async (invoices: Invoice[]) => {
-  if (!apiKey) return "AI insights unavailable without API key.";
+/**
+ * Uses Gemini 3 Pro with Thinking Mode to analyze financial data deeply.
+ */
+export const generateFinancialAnalysis = async (dashboardData: any) => {
+  if (!apiKey) throw new Error("API Key is missing");
 
   try {
-    // Simplify data for the prompt to save tokens
-    const invoiceSummary = invoices.map(inv => ({
-      date: inv.date,
-      amount: inv.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0),
-      currency: inv.currency,
-      status: inv.status
-    }));
-
     const response = await ai.models.generateContent({
-      model: modelName,
-      contents: `Analyze this invoice data: ${JSON.stringify(invoiceSummary)}. 
-      Provide a 2-sentence executive summary of the business health, focusing on cash flow and overdue payments. 
-      Be professional and concise.`,
+      model: MODEL_THINKING,
+      contents: `Analyze this dashboard data and provide 3 strategic, actionable insights for the business owner. Focus on cash flow gaps, overdue trends, and profitability. Data: ${JSON.stringify(dashboardData)}`,
+      config: {
+        thinkingConfig: { thinkingBudget: 32768 }, // Max thinking budget for deep reasoning
+      },
     });
 
     return response.text;
   } catch (error) {
-    console.error("Gemini Insight Error:", error);
-    return "Could not generate insights at this time.";
+    console.error("Thinking AI Error:", error);
+    // Fallback to fast model if thinking model isn't available/whitelisted for the key
+    try {
+        const fallbackResponse = await ai.models.generateContent({
+            model: MODEL_FAST,
+            contents: `Analyze this dashboard data and provide 3 strategic, actionable insights. Data: ${JSON.stringify(dashboardData)}`,
+        });
+        return fallbackResponse.text;
+    } catch (fallbackError) {
+        throw error;
+    }
   }
 };
 
+/**
+ * Creates a chat session using Gemini 3 Pro (Thinking) for complex client queries.
+ */
 export const createClientChat = (contextData: any): Chat => {
-  if (!apiKey) {
-    throw new Error("API Key missing");
-  }
+  if (!apiKey) throw new Error("API Key is missing");
+
   return ai.chats.create({
-    model: modelName,
+    model: MODEL_THINKING,
     config: {
-      systemInstruction: `You are an AI Client Liaison for 'Ring Invoicing'. 
-      Your goal is to help the freelancer manage their clients.
-      You have access to the following client and invoice data:
-      ${JSON.stringify(contextData)}
-      
-      You can:
-      1. Summarize client account status (total paid, overdue, etc).
-      2. Draft emails (payment reminders, thank you notes, proposals).
-      3. Suggest business actions based on payment history.
-      
-      Keep responses concise, professional, and friendly. 
-      Use the provided data to be specific (e.g., mention actual amounts and invoice numbers).
-      `,
+      thinkingConfig: { thinkingBudget: 16384 }, // Balanced thinking for chat
+      systemInstruction: `You are the AI Liaison for RING. You have access to client and invoice data. 
+      Use deep reasoning to answer questions about revenue, overdue payments, and client relationships.
+      Context: ${JSON.stringify(contextData)}`,
     },
   });
+};
+
+/**
+ * Generates speech from text using Gemini TTS.
+ * Returns an AudioBuffer.
+ */
+export const generateSpeechFromText = async (text: string): Promise<AudioBuffer> => {
+  if (!apiKey) throw new Error("API Key is missing");
+
+  const response = await ai.models.generateContent({
+    model: MODEL_TTS,
+    contents: [{ parts: [{ text: text }] }],
+    config: {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: 'Kore' },
+        },
+      },
+    },
+  });
+
+  const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  
+  if (!base64Audio) {
+    throw new Error("No audio data generated");
+  }
+
+  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  const audioBuffer = await audioContext.decodeAudioData(decode(base64Audio).buffer);
+  
+  return audioBuffer;
+};
+
+export const playAudioBuffer = (buffer: AudioBuffer) => {
+  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  const source = audioContext.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioContext.destination);
+  source.start(0);
 };
