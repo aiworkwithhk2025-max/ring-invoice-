@@ -2,7 +2,7 @@ import { GoogleGenAI, Type, Chat } from "@google/genai";
 import { Invoice } from "../types";
 
 // NOTE: In a real app, never expose API keys on the client side.
-// This is a demo environment where process.env.API_KEY is assumed to be safe/injected.
+// This is a demo environment where process.env.API_KEY || 'FAKE_API_KEY_FOR_DEVELOPMENT' is assumed to be safe/injected.
 const apiKey = process.env.API_KEY || '';
 const ai = new GoogleGenAI({ apiKey });
 
